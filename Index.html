@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Colour Match Rush</title>
+  <style>
+    :root { --bg1:#0b0f2a; --bg2:#2b0f4a; --card:rgba(255,255,255,.08); --stroke:rgba(255,255,255,.15); }
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body {
+      margin:0; min-height:100vh;
+      background: radial-gradient(1200px 800px at 50% 0%, #3b1a6a, transparent 60%),
+                  linear-gradient(180deg,var(--bg2),var(--bg1));
+      color:#fff; display:flex; justify-content:center;
+    }
+    .app { width:min(420px, 100vw); padding:16px 16px 28px; }
+    .top { display:flex; gap:12px; align-items:center; justify-content:space-between; margin-top:6px; }
+    .pill {
+      background: var(--card); border:1px solid var(--stroke); border-radius:16px;
+      padding:10px 12px; min-width: 150px;
+      display:flex; align-items:center; justify-content:space-between;
+      backdrop-filter: blur(8px);
+    }
+    .pill b { font-size:18px; }
+    .pill small { opacity:.8; }
+    .hero {
+      margin:14px 0 12px;
+      background: var(--card); border:1px solid var(--stroke); border-radius:24px;
+      padding:16px; backdrop-filter: blur(8px);
+      position:relative;
+    }
+    .prompt { text-align:center; font-weight:800; letter-spacing:.06em; opacity:.9; margin:6px 0 10px; }
+    .ringWrap { display:flex; justify-content:center; }
+    canvas { width:100%; height:auto; }
+    .btnGrid {
+      display:grid; grid-template-columns: repeat(2, 1fr);
+      gap:14px; margin-top:14px;
+    }
+    .btn {
+      height:72px; border-radius:999px; border:none; cursor:pointer;
+      font-size:18px; font-weight:800; color:#0b0f2a;
+      box-shadow: 0 12px 26px rgba(0,0,0,.35);
+      transition: transform .06s ease, filter .06s ease;
+      touch-action: manipulation;
+    }
+    .btn:active { transform: scale(.98); filter: brightness(.95); }
+    .footerRow { display:flex; gap:12px; margin-top:12px; }
+    .card {
+      flex:1;
+      background: var(--card); border:1px solid var(--stroke); border-radius:18px;
+      padding:12px; backdrop-filter: blur(8px);
+    }
+    .card h3 { margin:0 0 8px; font-size:14px; letter-spacing:.08em; opacity:.85; }
+    .lbRow { display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid rgba(255,255,255,.08); }
+    .lbRow:first-of-type { border-top:none; }
+    .actions { display:flex; gap:10px; margin-top:14px; }
+    .actionBtn {
+      flex:1; height:54px; border-radius:16px; border:1px solid var(--stroke);
+      background: rgba(255,255,255,.10); color:#fff; font-weight:800; font-size:16px;
+      cursor:pointer;
+    }
+    .actionBtn.primary { background: linear-gradient(90deg,#ffd54a,#ff7c2f); color:#1a1030; border:none; }
+    .overlay {
+      position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+      background: rgba(0,0,0,.55); padding:18px;
+    }
+    .modal {
+      width:min(420px, 100%); border-radius:22px; padding:16px;
+      background: rgba(20,16,40,.92); border:1px solid rgba(255,255,255,.14);
+      box-shadow: 0 28px 80px rgba(0,0,0,.55);
+    }
+    .modal h2 { margin:0 0 8px; }
+    .modal p { margin:6px 0; opacity:.9; }
+    .modal .row { display:flex; gap:10px; margin-top:12px; }
+    .tag { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.18); opacity:.9; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <div class="pill"><small>SCORE</small><b id="score">0</b></div>
+      <div class="pill"><small>COMBO</small><b id="combo">x1</b></div>
+    </div>
+
+    <div class="hero">
+      <div class="prompt" id="prompt">MATCH THIS COLOUR!</div>
+      <div class="ringWrap">
+        <!-- 1 canvas does both: timer ring + target tile -->
+        <canvas id="hud" width="360" height="360" aria-label="game hud"></canvas>
+      </div>
+
+      <div class="btnGrid" id="buttons"></div>
+
+      <div class="actions">
+        <button class="actionBtn primary" id="startBtn">PLAY</button>
+        <button class="actionBtn" id="howBtn">HOW</button>
+      </div>
+    </div>
+
+    <div class="footerRow">
+      <div class="card">
+        <h3>LEADERBOARD (LOCAL)</h3>
+        <div id="leaderboard"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <h2 id="modalTitle">Game Over</h2>
+      <p id="modalBody"></p>
+      <p><span class="tag">Tap PLAY to try again</span></p>
+      <div class="row">
+        <button class="actionBtn primary" id="playAgainBtn">PLAY AGAIN</button>
+        <button class="actionBtn" id="closeBtn">CLOSE</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---------- Game config ----------
+  const COLORS = [
+    { name:"RED",    hex:"#ff3b30" },
+    { name:"BLUE",   hex:"#2f7dff" },
+    { name:"GREEN",  hex:"#34c759" },
+    { name:"YELLOW", hex:"#ffd60a" },
+    { name:"PURPLE", hex:"#bf5af2" },
+    { name:"ORANGE", hex:"#ff9f0a" },
+  ];
+
+  const ROUND_TIME_START_MS = 1800;  // initial per-round time
+  const ROUND_TIME_MIN_MS   = 750;   // floor as difficulty increases
+  const TIME_DECAY_PER_ROUND = 35;   // gets faster each round
+
+  const BASE_POINTS = 50;
+  const SPEED_BONUS_MAX = 120;       // extra if you answer instantly
+  const COMBO_MAX = 8;               // cap multiplier growth
+
+  const STORAGE_KEY = "cmr_leaderboard_v1";
+
+  // ---------- State ----------
+  let running = false;
+  let target = null;
+  let round = 0;
+  let score = 0;
+  let combo = 1;
+
+  let roundTimeMs = ROUND_TIME_START_MS;
+  let roundStart = 0;
+  let rafId = null;
+
+  // ---------- DOM ----------
+  const canvas = document.getElementById("hud");
+  const ctx = canvas.getContext("2d");
+  const scoreEl = document.getElementById("score");
+  const comboEl = document.getElementById("combo");
+  const buttonsEl = document.getElementById("buttons");
+  const startBtn = document.getElementById("startBtn");
+  const howBtn = document.getElementById("howBtn");
+
+  const overlay = document.getElementById("overlay");
+  const modalTitle = document.getElementById("modalTitle");
+  const modalBody = document.getElementById("modalBody");
+  const playAgainBtn = document.getElementById("playAgainBtn");
+  const closeBtn = document.getElementById("closeBtn");
+
+  const leaderboardEl = document.getElementById("leaderboard");
+
+  // ---------- Helpers ----------
+  const randInt = (n) => Math.floor(Math.random() * n);
+  const pickN = (arr, n) => {
+    const copy = [...arr];
+    const out = [];
+    while (out.length < n && copy.length) out.push(copy.splice(randInt(copy.length),1)[0]);
+    return out;
+  };
+
+  function loadLB() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }
+  function saveLB(entries) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  }
+  function pushScoreToLB(newScore) {
+    const lb = loadLB();
+    const entry = { score: newScore, when: Date.now() };
+    lb.push(entry);
+    lb.sort((a,b) => b.score - a.score);
+    const top = lb.slice(0, 8);
+    saveLB(top);
+    renderLB();
+  }
+  function renderLB() {
+    const lb = loadLB();
+    leaderboardEl.innerHTML = "";
+    if (!lb.length) {
+      leaderboardEl.innerHTML = `<div style="opacity:.85">No scores yet — hit PLAY.</div>`;
+      return;
+    }
+    lb.forEach((e, i) => {
+      const d = new Date(e.when);
+      const label = d.toLocaleDateString(undefined, { month:"short", day:"numeric" });
+      const row = document.createElement("div");
+      row.className = "lbRow";
+      row.innerHTML = `<div>#${i+1} <span style="opacity:.85">${label}</span></div><b>${e.score}</b>`;
+      leaderboardEl.appendChild(row);
+    });
+  }
+
+  // ---------- UI build ----------
+  function buildButtons(options) {
+    buttonsEl.innerHTML = "";
+    options.forEach(c => {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.style.background = c.hex;
+      b.textContent = c.name;
+      b.addEventListener("click", () => onPick(c));
+      buttonsEl.appendChild(b);
+    });
+  }
+
+  // ---------- HUD drawing ----------
+  function drawHUD(progress01) {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+
+    // background glow
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath();
+    ctx.arc(w/2,h/2,150,0,Math.PI*2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.restore();
+
+    // ring
+    const cx = w/2, cy = h/2;
+    const r = 145;
+    const startAng = -Math.PI/2;
+    const endAng = startAng + Math.PI*2;
+
+    // ring track
+    ctx.lineWidth = 18;
+    ctx.strokeStyle = "rgba(255,255,255,.12)";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.stroke();
+
+    // ring progress (color shifts)
+    const p = Math.max(0, Math.min(1, progress01));
+    const hue = 120 * p; // 0..120
+    ctx.strokeStyle = `hsl(${hue}, 90%, 55%)`;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startAng, startAng + (Math.PI*2 * p), false);
+    ctx.stroke();
+
+    // target tile
+    const tileW = 210, tileH = 210, rad = 28;
+    const x = cx - tileW/2, y = cy - tileH/2;
+
+    // tile shadow
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.35)";
+    roundRect(ctx, x+6, y+10, tileW, tileH, rad);
+    ctx.fill();
+    ctx.restore();
+
+    // tile body
+    const fill = target ? target.hex : "rgba(255,255,255,.18)";
+    ctx.fillStyle = fill;
+    roundRect(ctx, x, y, tileW, tileH, rad);
+    ctx.fill();
+
+    // tile inner stroke
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(255,255,255,.25)";
+    roundRect(ctx, x, y, tileW, tileH, rad);
+    ctx.stroke();
+
+    // label
+    ctx.fillStyle = "rgba(10,8,25,.85)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "800 52px system-ui";
+    const label = target ? target.name : "READY";
+    ctx.fillText(label, cx, cy);
+
+    // round + time info
+    ctx.font = "700 18px system-ui";
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    ctx.fillText(running ? `Round ${round}` : "Press PLAY", cx, cy + 86);
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y, x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x, y+h, rr);
+    ctx.arcTo(x, y+h, x, y, rr);
+    ctx.arcTo(x, y, x+w, y, rr);
+    ctx.closePath();
+  }
+
+  // ---------- Game logic ----------
+  function startGame() {
+    running = true;
+    round = 0;
+    score = 0;
+    combo = 1;
+    roundTimeMs = ROUND_TIME_START_MS;
+    updateHUDText();
+    nextRound();
+  }
+
+  function nextRound() {
+    round += 1;
+    // difficulty ramps
+    roundTimeMs = Math.max(ROUND_TIME_MIN_MS, ROUND_TIME_START_MS - (round-1) * TIME_DECAY_PER_ROUND);
+
+    // choose target + options
+    const options = pickN(COLORS, 4);
+    target = options[randInt(options.length)];
+
+    buildButtons(options);
+
+    roundStart = performance.now();
+    loop();
+    updateHUDText();
+  }
+
+  function onPick(choice) {
+    if (!running) return;
+
+    const now = performance.now();
+    const elapsed = now - roundStart;
+    const remaining = Math.max(0, roundTimeMs - elapsed);
+
+    if (remaining <= 0) {
+      return endGame("Time ran out!");
+    }
+    if (choice.name !== target.name) {
+      return endGame("Wrong colour!");
+    }
+
+    // Correct: score based on speed
+    const speed01 = remaining / roundTimeMs; // 0..1
+    const speedBonus = Math.round(SPEED_BONUS_MAX * speed01);
+    const gained = (BASE_POINTS + speedBonus) * combo;
+
+    score += gained;
+
+    // combo ramps up
+    combo = Math.min(COMBO_MAX, combo + 1);
+
+    // quick feedback: flash canvas
+    flashHUD();
+
+    nextRound();
+  }
+
+  function flashHUD() {
+    canvas.style.filter = "brightness(1.2)";
+    setTimeout(() => canvas.style.filter = "none", 70);
+  }
+
+  function updateHUDText() {
+    scoreEl.textContent = String(score);
+    comboEl.textContent = `x${combo}`;
+  }
+
+  function endGame(reason) {
+    running = false;
+    cancelAnimationFrame(rafId);
+    rafId = null;
+
+    pushScoreToLB(score);
+
+    modalTitle.textContent = "Game Over";
+    modalBody.innerHTML = `
+      <p><b>${reason}</b></p>
+      <p>Final score: <b>${score}</b></p>
+      <p>Best tip: build combo by staying accurate — speed comes second.</p>
+    `;
+    overlay.style.display = "flex";
+
+    // reset view to ready state
+    target = null;
+    buildButtons(pickN(COLORS, 4)); // inert until play
+    drawHUD(0);
+    updateHUDText();
+    startBtn.textContent = "PLAY";
+  }
+
+  function loop() {
+    if (!running) return;
+
+    const now = performance.now();
+    const elapsed = now - roundStart;
+    const remaining = Math.max(0, roundTimeMs - elapsed);
+    const progress01 = remaining / roundTimeMs;
+
+    drawHUD(progress01);
+
+    if (remaining <= 0) {
+      endGame("Time ran out!");
+      return;
+    }
+
+    rafId = requestAnimationFrame(loop);
+  }
+
+  // ---------- How modal ----------
+  function showHow() {
+    modalTitle.textContent = "How to Play";
+    modalBody.innerHTML = `
+      <p>1) A colour appears in the middle.</p>
+      <p>2) Tap the matching button.</p>
+      <p>3) Faster taps earn more points.</p>
+      <p><b>One mistake or timeout = game over.</b></p>
+      <p>Climb the leaderboard with long streaks.</p>
+    `;
+    overlay.style.display = "flex";
+  }
+
+  // ---------- Events ----------
+  startBtn.addEventListener("click", () => {
+    overlay.style.display = "none";
+    startBtn.textContent = "PLAYING…";
+    startGame();
+  });
+  howBtn.addEventListener("click", showHow);
+  playAgainBtn.addEventListener("click", () => {
+    overlay.style.display = "none";
+    startBtn.textContent = "PLAYING…";
+    startGame();
+  });
+  closeBtn.addEventListener("click", () => overlay.style.display = "none");
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.style.display = "none"; });
+
+  // init
+  renderLB();
+  buildButtons(pickN(COLORS, 4));
+  drawHUD(0);
+})();
+</script>
+</body>
+</html>
