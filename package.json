@@ -1,0 +1,9 @@
+{
+  "name": "colour-match-rush",
+  "private": true,
+  "description": "Colour Match Rush, a static colour-matching game.",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "test": "node --test"
+  }
+}
